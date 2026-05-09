@@ -135,44 +135,56 @@ init();
 
 // 5. Основная функция поиска совпадений
 function getMatches(syllable, dict) {
-    const s = syllable.trim();
+    const s = syllable.trim().toLowerCase();
     if (!s || dict.length === 0) return [];
     
-    const sLower = s.toLowerCase();
     const normSyl = normalize(s);
     
     return dict
         .map(item => {
             let score = 0;
-            const normWord = item.norm;
             const origWord = item.original.toLowerCase();
+            const normWord = item.norm;
 
-            // ПРИОРИТЕТ 1: Слово начинается на те же буквы (для "l", "po" и т.д.)
-            if (origWord.startsWith(sLower)) {
-                score += 50000;
+            // 1. Estetään täysin saman lyhyen tavun näyttäminen (esim. "mi" -> ei näytetä "mi")
+            if (origWord === s && s.length <= 2) {
+                score -= 100000;
             }
 
-            // ПРИОРИТЕТ 2: Фонетическое сходство
+            // 2. Prioriteetti 1: Sana alkaa samalla tavulla
+            if (origWord.startsWith(s)) {
+                // Annetaan isompi bonus, jos sana on pidempi kuin pelkkä tavu
+                score += (origWord.length > s.length) ? 50000 : 5000;
+            }
+
+            // 3. Prioriteetti 2: Foneettinen samankaltaisuus
             if (normWord === normSyl) {
-                score += 20000;
+                score += 30000;
             } else if (normWord.startsWith(normSyl)) {
+                score += 15000;
+            }
+
+            // 4. LEVENSHTEIN (läheisyys)
+            const dist = getLevenshteinDistance(normSyl, normWord);
+            score += (10 - dist) * 1000;
+
+            // 5. PITUUS-BONUS: Suositaan 4-7 kirjaimen sanoja (ne ovat parhaita muistisanoja)
+            if (origWord.length >= 4 && origWord.length <= 7) {
                 score += 10000;
-            } else if (normWord.includes(normSyl)) {
-                score += 5000;
             }
 
-            // ПРИОРИТЕТ 3: Похожее написание (Левенштейн)
-            if (Math.abs(normWord.length - normSyl.length) <= 2) {
-                const dist = getLevenshteinDistance(normSyl, normWord);
-                score += (10 - dist) * 600;
+            // 6. Rangaistus liian lyhyistä sanoista sanakirjassa (1-2 merkkiä)
+            if (origWord.length <= 2) {
+                score -= 40000;
             }
 
-            // Штраф за длину слова
+            // Pituuseron sakotus
             score -= Math.abs(normWord.length - normSyl.length) * 100;
             
             return { word: item.original, score };
         })
-        .filter(item => item.score > 0)
+        // Suodatetaan pois sanat, jotka ovat identtisiä syötteen kanssa (esim. "mi")
+        .filter(item => item.score > 0 && item.word.toLowerCase() !== s)
         .sort((a, b) => b.score - a.score)
         .slice(0, 15);
 }
