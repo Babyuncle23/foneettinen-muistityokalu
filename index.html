@@ -67,9 +67,9 @@
 </main>
 
 <script>
-// 1. Настройки и глобальные переменные
 let dictionary = [];
 
+// 1. Asetukset ja foneettiset ryhmät
 const groups = [
     ['a', 'ä'], ['o', 'ö'], ['u', 'y'], ['t', 'd'], ['p', 'b'], 
     ['s', 'z', 'ž', 'š'], ['j', 'zh'], ['k', 'c', 'q'], ['v', 'w']
@@ -79,7 +79,7 @@ const phonetics = {
     'ch': 'ts', 'sh': 's', 'zh': 's', 'cz': 'ts', 'x': 'ks', 'ph': 'f'
 };
 
-// 2. Функция нормализации (подготовка слова к сравнению)
+// 2. Normalisointi (nopeutettu versio)
 function normalize(word) {
     if (!word) return "";
     let w = word.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -88,16 +88,18 @@ function normalize(word) {
         w = w.split(complex).join(simple);
     }
     
-    w = w.replace(/(.)\1+/g, '$1'); // Схлопывание двойных букв
+    w = w.replace(/(.)\1+/g, '$1'); 
     
     groups.forEach(group => {
         const main = group;
-        group.slice(1).forEach(char => { w = w.split(char).join(main); });
+        for (let i = 1; i < group.length; i++) {
+            w = w.split(group[i]).join(main);
+        }
     });
     return w;
 }
 
-// 3. Алгоритм Левенштейна (поиск похожих слов с опечатками)
+// 3. Levenshtein-etäisyys
 function getLevenshteinDistance(a, b) {
     const matrix = Array.from({ length: b.length + 1 }, (_, i) => [i]);
     for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
@@ -110,86 +112,81 @@ function getLevenshteinDistance(a, b) {
     return matrix[b.length][a.length];
 }
 
-// 4. Загрузка и оптимизация словаря при запуске
+// 4. Sanakirjan lataus
 async function init() {
     try {
         const response = await fetch('kaikkisanat.txt');
         const text = await response.text();
         
-        // Создаем массив объектов, чтобы не нормализовать слова каждый раз при поиске
         dictionary = text.split('\n')
             .map(word => word.trim())
-            .filter(word => word.length > 0)
+            .filter(word => word.length >= 2)
             .map(word => ({
                 original: word,
                 norm: normalize(word)
             }));
             
-        console.log('Словарь загружен и готов к работе!');
+        console.log('Sanakirja ladattu ja optimoitu!');
     } catch (error) {
-        console.error('Ошибка загрузки словаря:', error);
+        console.error('Virhe sanakirjan latauksessa:', error);
     }
 }
 
-init();
-
-// 5. Основная функция поиска совпадений
+// 5. Optimoitu haku
 function getMatches(syllable, dict) {
     const s = syllable.trim().toLowerCase();
-    if (!s || dict.length === 0) return [];
+    if (s.length < 1) return [];
     
     const normSyl = normalize(s);
-    
-    return dict
+    const firstLetter = s.charAt(0);
+    const normFirst = normalize(firstLetter);
+
+    // VAIHE 1: Nopea esisuodatus (estää hidastumisen)
+    // Otetaan vain sanat, jotka alkavat samalla kirjaimella
+    let candidates = dict.filter(item => {
+        const orig = item.original.toLowerCase();
+        return orig.startsWith(firstLetter) || item.norm.startsWith(normFirst);
+    });
+
+    // Jos alkukirjaimella ei löydy mitään, laajennetaan hieman (varotoimi)
+    if (candidates.length === 0) candidates = dict.slice(0, 500);
+
+    // VAIHE 2: Pisteytys
+    return candidates
         .map(item => {
             let score = 0;
-            const origWord = item.original.toLowerCase();
-            const normWord = item.norm;
+            const orig = item.original.toLowerCase();
+            const norm = item.norm;
 
-            // 1. Estetään täysin saman lyhyen tavun näyttäminen (esim. "mi" -> ei näytetä "mi")
-            if (origWord === s && s.length <= 2) {
-                score -= 100000;
+            // PRIORITEETTI 1: Sana alkaa täsmälleen syötteellä
+            if (orig.startsWith(s)) {
+                score += 200000;
+            } else if (norm.startsWith(normSyl)) {
+                score += 100000;
             }
 
-            // 2. Prioriteetti 1: Sana alkaa samalla tavulla
-            if (origWord.startsWith(s)) {
-                // Annetaan isompi bonus, jos sana on pidempi kuin pelkkä tavu
-                score += (origWord.length > s.length) ? 50000 : 5000;
-            }
+            // RANGAISTUS: Jos tavu löytyy sanan keskeltä (estää "zapan" kaltaiset virheet)
+            const index = orig.indexOf(s);
+            if (index > 0) score -= 150000;
 
-            // 3. Prioriteetti 2: Foneettinen samankaltaisuus
-            if (normWord === normSyl) {
-                score += 30000;
-            } else if (normWord.startsWith(normSyl)) {
-                score += 15000;
-            }
+            // PRIORITEETTI 2: Hyvä pituus muistisanalle (4-7 merkkiä)
+            if (orig.length >= 4 && orig.length <= 7) score += 30000;
 
-            // 4. LEVENSHTEIN (läheisyys)
-            const dist = getLevenshteinDistance(normSyl, normWord);
-            score += (10 - dist) * 1000;
+            // RANGAISTUS: Liian lyhyet sanat (alle 3 merkkiä)
+            if (orig.length < 3 && orig !== s) score -= 50000;
 
-            // 5. PITUUS-BONUS: Suositaan 4-7 kirjaimen sanoja (ne ovat parhaita muistisanoja)
-            if (origWord.length >= 4 && origWord.length <= 7) {
-                score += 10000;
-            }
+            // Foneettinen tarkkuus (Levenshtein)
+            const dist = getLevenshteinDistance(normSyl, norm);
+            score += (10 - dist) * 2000;
 
-            // 6. Rangaistus liian lyhyistä sanoista sanakirjassa (1-2 merkkiä)
-            if (origWord.length <= 2) {
-                score -= 40000;
-            }
-
-            // Pituuseron sakotus
-            score -= Math.abs(normWord.length - normSyl.length) * 100;
-            
             return { word: item.original, score };
         })
-        // Suodatetaan pois sanat, jotka ovat identtisiä syötteen kanssa (esim. "mi")
-        .filter(item => item.score > 0 && item.word.toLowerCase() !== s)
+        .filter(item => item.score > -100000 && item.word.toLowerCase() !== s)
         .sort((a, b) => b.score - a.score)
         .slice(0, 15);
 }
 
-// 6. Взаимодействие с HTML элементами
+// 6. Käyttöliittymän tapahtumat
 const inputField = document.getElementById('word-input');
 const selects = [
     document.getElementById('select-1'), 
@@ -198,13 +195,10 @@ const selects = [
 ];
 
 inputField.addEventListener('input', () => {
-    // Разбиваем ввод по запятым
     const parts = inputField.value.split(',').map(p => p.trim()).filter(p => p);
 
     selects.forEach((select, index) => {
         select.innerHTML = '<option value="">Valitse sana...</option>';
-        
-        // Если есть часть слова для этого селекта
         if (parts[index]) {
             const matches = getMatches(parts[index], dictionary);
             matches.forEach(m => {
@@ -213,13 +207,11 @@ inputField.addEventListener('input', () => {
                 opt.textContent = m.word;
                 select.appendChild(opt);
             });
-            // Автоматически выбираем первый результат
             if (select.options.length > 1) select.selectedIndex = 1;
         }
     });
 });
 
-// Кнопка "Lataa sanat" (копирование в текстовое поле)
 document.querySelector('.copy-words-btn').addEventListener('click', () => {
     const selected = selects.map(s => s.value).filter(v => v);
     const area = document.getElementById('story-area');
@@ -228,16 +220,16 @@ document.querySelector('.copy-words-btn').addEventListener('click', () => {
     }
 });
 
-// Кнопки "Рандом" (кубики)
 document.querySelectorAll('.random-btn').forEach((btn, i) => {
     btn.addEventListener('click', () => {
         const s = selects[i];
         if (s.options.length > 1) {
-            // Выбираем случайный элемент из списка (кроме первого "Valitse sana...")
             s.selectedIndex = Math.floor(Math.random() * (s.options.length - 1)) + 1;
         }
     });
 });
+
+init();
 </script>
 </body>
 </html>
