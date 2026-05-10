@@ -141,14 +141,12 @@ function getMatches(syllable, dict) {
     const firstLetter = s.charAt(0);
     const normFirst = normalize(firstLetter);
 
-    // VAIHE 1: Nopea esisuodatus (estää hidastumisen)
-    // Otetaan vain sanat, jotka alkavat samalla kirjaimella
+    // VAIHE 1: Nopea esisuodatus (alkukirjaimen mukaan)
     let candidates = dict.filter(item => {
         const orig = item.original.toLowerCase();
         return orig.startsWith(firstLetter) || item.norm.startsWith(normFirst);
     });
 
-    // Jos alkukirjaimella ei löydy mitään, laajennetaan hieman (varotoimi)
     if (candidates.length === 0) candidates = dict.slice(0, 500);
 
     // VAIHE 2: Pisteytys
@@ -158,31 +156,37 @@ function getMatches(syllable, dict) {
             const orig = item.original.toLowerCase();
             const norm = item.norm;
 
- // PRIORITEETTI 1: Sana alkaa täsmälleen syötteellä
+            // PRIORITEETTI 1: Sana alkaa täsmälleen syötteellä
             if (orig.startsWith(s)) {
                 score += 200000;
             } else if (norm.startsWith(normSyl)) {
                 score += 100000;
             }
 
-            // RANGAISTUS: Jos tavu löytyy sanan keskeltä
+            // RANGAISTUS: Jos tavu löytyy sanan keskeltä (estää epäloogiset osumat)
             const index = orig.indexOf(s);
             if (index > 0) score -= 150000;
 
-            // UUSI PITUUS-LOGIIKKA FIN: 
-            // Suomessa 2-3 kirjaimen sanat ovat hyviä (tie, puu, maa), 
-            // joten emme rankaise niitä kovasti.
+            // PAINOTUS (Short Distance): 
+            // Mitä vähemmän ylimääräisiä kirjaimia, sitä korkeammat pisteet.
+            // Tämä nostaa esim. "tie" sanan kärkeen syötteellä "tie" ohi sanan "tiede".
+            let lengthDiff = Math.abs(orig.length - s.length);
+            score -= lengthDiff * 10000; 
+
+            // SUOMALAINEN PITUUS-LOGIIKKA: 
+            // Pienempi bonus konkreettisille, helposti kuviteltaville sanoille (2-6 merkkiä).
             if (orig.length >= 2 && orig.length <= 6) {
-                score += 40000; // Bonus lyhyille ja keskipitkille sanoille
+                score += 30000;
             }
 
-            // Foneettinen tarkkuus
+            // Foneettinen tarkkuus (Levenshtein)
             const dist = getLevenshteinDistance(normSyl, norm);
             score += (10 - dist) * 2000;
 
             return { word: item.original, score };
         })
-        .filter(item => item.score > -100000 && (item.word.toLowerCase() !== s || s.length > 2))
+        // SALLITAAN SYÖTE TULOKSIIN: Jos sana on pitempi kuin 2 merkkiä (esim. "tie", "maa").
+        .filter(item => item.score > -200000 && (item.word.toLowerCase() !== s || s.length > 2))
         .sort((a, b) => b.score - a.score)
         .slice(0, 15);
 }
