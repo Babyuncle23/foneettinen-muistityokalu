@@ -158,24 +158,25 @@ function getMatches(syllable, dict) {
             const orig = item.original.toLowerCase();
             const norm = item.norm;
 
-            // PRIORITEETTI 1: Sana alkaa täsmälleen syötteellä
+ // PRIORITEETTI 1: Sana alkaa täsmälleen syötteellä
             if (orig.startsWith(s)) {
                 score += 200000;
             } else if (norm.startsWith(normSyl)) {
                 score += 100000;
             }
 
-            // RANGAISTUS: Jos tavu löytyy sanan keskeltä (estää "zapan" kaltaiset virheet)
+            // RANGAISTUS: Jos tavu löytyy sanan keskeltä
             const index = orig.indexOf(s);
             if (index > 0) score -= 150000;
 
-            // PRIORITEETTI 2: Hyvä pituus muistisanalle (4-7 merkkiä)
-            if (orig.length >= 4 && orig.length <= 7) score += 30000;
+            // UUSI PITUUS-LOGIIKKA FIN: 
+            // Suomessa 2-3 kirjaimen sanat ovat hyviä (tie, puu, maa), 
+            // joten emme rankaise niitä kovasti.
+            if (orig.length >= 2 && orig.length <= 6) {
+                score += 40000; // Bonus lyhyille ja keskipitkille sanoille
+            }
 
-            // RANGAISTUS: Liian lyhyet sanat (alle 3 merkkiä)
-            if (orig.length < 3 && orig !== s) score -= 50000;
-
-            // Foneettinen tarkkuus (Levenshtein)
+            // Foneettinen tarkkuus
             const dist = getLevenshteinDistance(normSyl, norm);
             score += (10 - dist) * 2000;
 
